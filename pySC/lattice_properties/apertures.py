@@ -5,60 +5,36 @@ from pySC.utils.at_wrapper import atpass, findorbit6, findorbit4, findspos
 from pySC.utils import logging_tools
 
 LOGGER = logging_tools.get_logger(__name__)
+import at
 
-def SCdynamicAperture(RING, dE, bounds=np.array([0, 1e-3]), nturns=1000, thetas=np.linspace(0, 2 * np.pi, 16),
+def SCdynamicApertureAT(RING, dE, bounds=np.array([0, 1e-3]), nturns=1000, thetas=np.linspace(0, 2 * np.pi, 16),
                       accuracy=1e-6, launchOnOrbit=False, centerOnOrbit=True, useOrbit6=False, auto=0, plot=False):
-    inibounds = bounds
-    if auto > 0:
-        _, thetas = _autothetas(RING, dE, auto)
-    sidx = np.argsort(np.abs(inibounds))  # Sort bounds w.r.t absolute value
-    inibounds = inibounds[sidx]
-    ZCO = np.zeros(6)
-    if launchOnOrbit:
-        if useOrbit6:
-            ZCO = findorbit6(RING)
-        else:
-            tmp = findorbit4(RING, 0)
-            if ~np.isnan(tmp[0]):
-                ZCO[0:4] = tmp
-    ZCO[5] = ZCO[5] + dE
-    RMAXs = np.full(len(thetas), np.nan)  # Initialize output array
-    DA = np.nan
-    for cntt in range(len(thetas)):  # Loop over angles
-        theta = thetas[cntt]
-        limits = inibounds
-        atpass(RING, np.full(6, np.nan), 1, [1])  # Fake Track to initialize lattice
-        scales = 0
-        while scales < 16:
-            if _check_bounds(RING, ZCO, nturns, theta, limits):
-                break
-            limits = scale_bounds(limits, 10)
-            scales = scales + 1
-            LOGGER.debug(f'Scaled: {limits}')
-        while np.abs(limits[1] - limits[0]) > accuracy:
-            limits = _refine_bounds(RING, ZCO, nturns, theta, limits)
-            LOGGER.debug(f'Refined: {limits}')
-        RMAXs[cntt] = np.mean(limits)  # Store mean of final boundaries
+    #if auto > 0:
+    #_, thetas = _autothetas(RING, dE, auto)
+    bf,sf,gf = at.get_acceptance(RING,planes=['x','y'],npoints=[10,100],amplitudes=[0.5,0.5],grid_mode=0, nturns=1000,use_mp=True,dp=dE)
+    # bf=boundary – (len(refpts),2) array: 1D acceptance
+    # sf=survived – (n,) array: Coordinates of survived particles
+    # gf= tracked – (n,) array: Coordinates of tracked particles
     if plot:
         plt.figure(6232)
-        plt.scatter(np.cos(thetas) * RMAXs, np.sin(thetas) * RMAXs)
+        plt.plot(*gf,'.')
+        plt.plot(*sf,'.')
+        plt.plot(*bf)
         plt.show()
-    dthetas = np.diff(thetas)
-    r0 = RMAXs[0:(len(RMAXs) - 1)]
-    r1 = RMAXs[1:len(RMAXs)]
-    DA = np.sum(np.sin(dthetas) * r0 * r1 / 2.)
-    if centerOnOrbit:
-        if useOrbit6:
-            tmp = findorbit6(RING)
-        else:
-            tmp = findorbit4(RING, 0)
-        if not np.isnan(tmp[0]):
-            x, y = pol2cart(RMAXs, thetas)
-            x = x - tmp[0]
-            y = y - tmp[2]
-            RMAXs, thetas = cart2pol(x, y)
-            RMAXs = RMAXs.T
+    rsat=cart2pol(*bf)
+    thetas=rsat[1]
+    dthetas=-np.diff(thetas)
+    RMAXs=rsat[0]
+    r0=RMAXs[0:(len(rsat[0]) - 1)]
+    r1=RMAXs[1:(len(rsat[0]))]
+    DA = np.sum(np.sin(dthetas) * r0*r1 / 2.)
+    #the DA is in squared meter, RMAXs are the largest radii found at each of thetas
     return DA, RMAXs, thetas
+
+def cart2pol(x, y):
+    rho = np.sqrt(x**2 + y**2)
+    phi = np.arctan2(y, x)
+    return rho, phi
 
 
 def SCmomentumAperture(RING, REFPTS, inibounds, nturns=1000, accuracy=1e-4, stepsize=1e-3, plot=0):
